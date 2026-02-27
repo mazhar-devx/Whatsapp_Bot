@@ -30,9 +30,9 @@ function startWebServer() {
         }
     });
 
-    server.listen(PORT, "0.0.1", () => {
-        console.log(`🌐 [SYSTEM] Web Server running at http://localhost:${PORT}`);
-        console.log(`🔗 [SYSTEM] QR Page: http://localhost:${PORT}/qr`);
+    server.listen(PORT, "0.0.0.0", () => {
+        console.log(`🌐 [SYSTEM] Web Server running at port ${PORT}`);
+        console.log(`🔗 [SYSTEM] QR Page: /qr`);
     });
 }
 
