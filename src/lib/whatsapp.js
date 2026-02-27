@@ -45,8 +45,10 @@ async function connectToWhatsApp(authPath = "auth") {
                 });
 
                 console.log("📸 [SYSTEM] QR saved as image in: user_files/login-qr.png");
-                console.log("\n🔗 [BROWSER LINK] CLICK BELOW TO VIEW QR IN BROWSER:");
-                console.log(`\x1b[36mfile:///${qrPath.replace(/\\/g, "/")}\x1b[0m\n`);
+                console.log("\n🔗 [QR LINKS] SCAN USING ONE OF THESE:");
+                console.log(`👉 BROWSER URL: http://localhost:${process.env.PORT || 3000}/qr`);
+                console.log(`👉 FILE PATH: file:///${qrPath.replace(/\\/g, "/")}\n`);
+                console.log("💡 Tip: If running on Render, use your public service URL followed by /qr");
 
             } catch (err) {
                 console.error("❌ [SYSTEM] Failed to generate QR image:", err.message);

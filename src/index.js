@@ -1,6 +1,9 @@
 require("dotenv").config();
 const { connectToWhatsApp } = require("./lib/whatsapp");
 const { handleMessage, handlePresence } = require("./handlers/message");
+const { startWebServer } = require("./services/web");
+
+startWebServer();
 
 let conflictCounter = 0;
 let sock = null; // Global sock reference to manage state
