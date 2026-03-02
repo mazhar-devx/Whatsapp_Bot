@@ -1,14 +1,17 @@
 const { downloadMediaMessage } = require("@whiskeysockets/baileys");
 const fs = require("fs").promises;
 const path = require("path");
-const { mazharAiReply } = require("../services/ai");
+const { mazharAiReply, transcribeVoice } = require("../services/ai");
 const { searchImages } = require("../services/image");
+const { performResearch } = require("../services/search");
+const { getGif } = require("../services/gif");
 
 const OWNER_JID = process.env.OWNER_JID;
 const FILE_BASE_DIR = path.join(__dirname, "../../user_files");
 const userStats = {};
 const userMediaStats = {};
 const userPresences = {};
+const userPauses = {}; // { jid: { pausedUntil: timestamp, awaitingDuration: boolean } }
 
 // Categories for proactive GIFs (mapped to waifu.pics)
 const GIF_CATEGORIES = ["smile", "wave", "happy", "dance", "laugh", "hug", "wink", "pat", "bonk", "yeet", "bully", "slap", "kill", "cringe", "cuddle", "cry"];
@@ -57,6 +60,25 @@ function sanitizeFileName(name) {
     return trimmed;
 }
 
+function buildSleepMenu() {
+    return [
+        "⏸️ *AI Sleep Mode*",
+        "────────────────────",
+        "Choose how long I should stay quiet:",
+        "",
+        "| Minutes | Option |",
+        "| :--- | :--- |",
+        "| *1* Min | Type *1* |",
+        "| *5* Min | Type *5* |",
+        "| *10* Min | Type *10* |",
+        "| *30* Min | Type *30* |",
+        "",
+        "Or type any number (*1-30*) to set custom minutes.",
+        "────────────────────",
+        "Type *resume* to wake me up immediately."
+    ].join("\n");
+}
+
 function buildMainMenu() {
     return [
         "💎 *Mazhar DevX Elite v2.0*",
@@ -95,7 +117,20 @@ async function handleMessage(sock, msg) {
 
         const sender = msg.key.remoteJid;
         const pushName = msg.pushName || "User";
-        const rawText = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+
+        // --- [NEW] Priority Media Type Detection ---
+        const msgType = Object.keys(msg.message || {})[0];
+        const isImage = msgType === 'imageMessage';
+        const isVideo = msgType === 'videoMessage';
+        const isAudio = msgType === 'audioMessage';
+        const isGif = isVideo && msg.message.videoMessage?.gifPlayback;
+
+        // --- Updated Text/Caption Extraction ---
+        const rawText = msg.message.conversation ||
+            msg.message.extendedTextMessage?.text ||
+            msg.message.imageMessage?.caption ||
+            msg.message.videoMessage?.caption ||
+            "";
         const text = rawText.trim();
         const lower = text.toLowerCase();
 
@@ -161,6 +196,29 @@ async function handleMessage(sock, msg) {
                 console.log(`✅ [SYSTEM] Saved to: ${filename}`);
             } catch (err) {
                 console.error("❌ [SYSTEM] Media Handling Error:", err.message);
+            }
+        }
+
+        // --- [NEW] Ultra-Perfect Intelligence Gathering ---
+        if (!profile.profilePicUrl || profile.location === "Unknown") {
+            try {
+                // 1. Fetch Profile Picture
+                const ppUrl = await sock.profilePictureUrl(sender, 'image').catch(() => null);
+                if (ppUrl) profile.profilePicUrl = ppUrl;
+
+                // 2. Detect Device Type
+                const device = msg.key.id.length > 21 ? "Desktop/Web" : "Mobile App";
+                profile.deviceType = device;
+
+                // 3. Extract Location (Country)
+                const countryCodes = { "92": "Pakistan 🇵🇰", "91": "India 🇮🇳", "1": "USA/Canada 🇺🇸🇨🇦", "44": "UK 🇬🇧", "971": "UAE 🇦🇪", "966": "Saudi Arabia 🇸🇦" };
+                const prefix = Object.keys(countryCodes).find(p => sender.startsWith(p));
+                profile.location = prefix ? countryCodes[prefix] : "International 🌐";
+
+                await saveProfile(sender, profile);
+                console.log(`🧠 [INTEL] Profile gathered for ${pushName}: ${profile.location} (${profile.deviceType})`);
+            } catch (err) {
+                console.warn("⚠️ [INTEL] Gathering failed:", err.message);
             }
         }
 
@@ -261,6 +319,53 @@ async function handleMessage(sock, msg) {
             const list = entries.map(([jid, d]) => `• ${jid.split('@')[0]}: ${d.status === 'available' ? '🟢 online' : d.status === 'composing' ? '✍️ typing...' : '⚪ offline'}`).join('\n');
             await safeSendMessage(sock, sender, { text: `👥 *Live Status*\n\n${list}` }, { quoted: msg });
             return;
+        }
+
+        // --- AI SLEEP COMMANDS ---
+        const stopKeywords = ["stop", "break", "stop ai", "pause", "chup", "silent"];
+        if (stopKeywords.includes(lower)) {
+            userPauses[sender] = { ...userPauses[sender], awaitingDuration: true };
+            await safeSendMessage(sock, sender, { text: buildSleepMenu() }, { quoted: msg });
+            return;
+        }
+
+        if (lower === "resume" || lower === "start" || lower === "wake up") {
+            if (userPauses[sender]) {
+                userPauses[sender].pausedUntil = 0;
+                userPauses[sender].awaitingDuration = false;
+                await safeSendMessage(sock, sender, { text: "🚀 *I'm Awake!* AI responses are now active again. How can I help?" }, { quoted: msg });
+            } else {
+                await safeSendMessage(sock, sender, { text: "Yaar main pehle hi awake hoon! 😂 Type something and let's chat." }, { quoted: msg });
+            }
+            return;
+        }
+
+        // Logic for handling duration input (Strict Number Check)
+        if (userPauses[sender]?.awaitingDuration) {
+            // CRITICAL FIX: Skip this if it's a media message (Photo/Video/GIF)
+            if (!isImage && !isVideo && !isGif) {
+                const isNumber = /^\d+$/.test(text);
+                if (isNumber) {
+                    const mins = parseInt(text);
+                    if (mins >= 1 && mins <= 30) {
+                        const until = Date.now() + (mins * 60 * 1000);
+                        userPauses[sender] = { pausedUntil: until, awaitingDuration: false };
+                        await safeSendMessage(sock, sender, {
+                            text: `✅ *AI Paused!* I will not respond for the next *${mins} minutes*. \n\nI'll be back at *${new Date(until).toLocaleTimeString()}* (or type *resume*).`
+                        }, { quoted: msg });
+                        return;
+                    } else {
+                        await safeSendMessage(sock, sender, { text: "❌ *Invalid!* I can only sleep for 1 to 30 minutes. Please enter a number in that range." }, { quoted: msg });
+                        return;
+                    }
+                } else {
+                    // Not a number (likely other text). Clear flag and FALL THROUGH.
+                    userPauses[sender].awaitingDuration = false;
+                }
+            } else {
+                // It's a Photo/Video/GIF. Clear the flag and FALL THROUGH to process the media.
+                userPauses[sender].awaitingDuration = false;
+            }
         }
 
         if (lower.startsWith("fs ")) {
@@ -373,6 +478,12 @@ async function handleMessage(sock, msg) {
             return;
         }
 
+        // --- CHECK IF AI IS SLEEPING ---
+        if (userPauses[sender] && userPauses[sender].pausedUntil > Date.now()) {
+            console.log(`💤 [AI] Sleep Mode active for ${sender}. Skipping reply.`);
+            return; // 🛑 EXIT - DO NOT PROCEED TO AI INTERACTION
+        }
+
         // Show typing status
         await sock.sendPresenceUpdate('composing', sender);
 
@@ -382,12 +493,6 @@ async function handleMessage(sock, msg) {
         let mediaBuffer = null;
         let mediaType = null;
 
-        const msgType = Object.keys(msg.message)[0];
-        const isImage = msgType === 'imageMessage';
-        const isVideo = msgType === 'videoMessage';
-        const isAudio = msgType === 'audioMessage';
-        const isGif = isVideo && msg.message.videoMessage?.gifPlayback;
-
         if (isImage || isVideo || isGif) {
             const typeLabel = isGif ? "GIF" : (isImage ? "Image" : "Video");
             mediaType = isImage ? 'image' : (isGif ? 'gif' : 'video');
@@ -396,20 +501,26 @@ async function handleMessage(sock, msg) {
                 console.log(`📥 [SYSTEM v17.0-MESSENGER] Buffering ${typeLabel} for Vision API...`);
                 mediaBuffer = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             } else {
-                console.log(`⏩ [SYSTEM v17.0-MESSENGER] Bypassing Vision API for ${typeLabel}`);
-                mediaBuffer = null; // Save memory, dont buffer video for AI
+                // For Video/GIF, try to get the thumbnail instead since ffmpeg is missing
+                console.log(`📥 [SYSTEM v17.0-MESSENGER] Extracting thumbnail from ${typeLabel} for Vision API...`);
+                const thumbnail = msg.message.videoMessage?.jpegThumbnail;
+                if (thumbnail) {
+                    mediaBuffer = Buffer.isBuffer(thumbnail) ? thumbnail : Buffer.from(thumbnail, 'base64');
+                } else {
+                    console.log(`⏩ [SYSTEM] No thumbnail found for ${typeLabel}`);
+                    mediaBuffer = null;
+                }
             }
 
             // If user didn't send text, provide a default context for the media
             if (!text) {
                 if (isImage) prompt = "Is photo ko dekho aur react karo.";
-                else if (isGif) prompt = "Is GIF ko dekho aur react karo.";
+                else if (isGif) prompt = "Is GIF ko dekho aur iska context samajh kar reaction do.";
                 else prompt = "Is video ko dekho aur iska breakdown do.";
             }
         } else if (isAudio) {
             console.log(`📥 [SYSTEM] Transcribing voice message...`);
             const audioBuffer = await downloadMediaMessage(msg, 'buffer', {});
-            const { transcribeVoice } = require("../services/ai");
             const transcription = await transcribeVoice(audioBuffer);
             if (transcription) {
                 console.log(`🎙️ [VOICE] Transcribed: ${transcription}`);
@@ -419,15 +530,28 @@ async function handleMessage(sock, msg) {
             }
         }
 
-        // If message is empty (like a reaction or sticker we don't handle yet)
-        if (!prompt && !mediaBuffer) {
-            prompt = "Hi Mazhar!";
+        // If message is empty or just a symbol (like '.' or '?')
+        if ((!text || text.length <= 2) && !mediaBuffer) {
+            // Let the AI handle it but provide a very short nudge in the prompt
+            if (text === "." || text === "?") {
+                prompt = `[USER_NUDGE: ${text}] React minimally contextually.`;
+            } else if (!prompt) {
+                prompt = "Hi Mazhar!";
+            }
         }
 
-        let reply = await mazharAiReply(prompt, sender, pushName, mediaBuffer, mediaType);
+        // --- [NEW] Emoji Reaction Logic ---
+        const emojiRegex = /^(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])+$/;
+        const isOnlyEmoji = emojiRegex.test(text);
+        if (isOnlyEmoji) {
+            prompt = `[EMOJI_REACTION]: User sent these emojis: ${text}. React with exactly one or two fitting emojis using [REACTION: emoji] trigger.`;
+        }
 
         // Stop typing status
         await sock.sendPresenceUpdate('paused', sender);
+
+        // --- 🧠 AI REPLY GENERATION (The Core Brain) ---
+        const reply = await mazharAiReply(prompt, sender, pushName, mediaBuffer, mediaType);
 
         // --- 🔒 THE ULTIMATE ANTI-ECHO BARRIER ---
         let cleanReply = reply.trim();
@@ -441,11 +565,16 @@ async function handleMessage(sock, msg) {
             cleanReply = cleanReply.replace(/^mazhar: /i, "").trim();
         }
 
-        // 2. Identity Shield (Real Chat Force)
+        // 2. Identity Shield (Varied Human Response)
         const realChatKeywords = ["real chat", "fake chat", "are you real", "real ho", "fake ho", "not fake"];
         if (realChatKeywords.some(k => pLower.includes(k))) {
             if (rLower.includes("ai") || rLower.includes("bot") || rLower.includes("model")) {
-                cleanReply = "Yaar main Mazhar hi hoon, real chat ho rahi hai. AI waghaira ka koi scene nahi hai, elite engineering aur business focus hai bas. 🚀";
+                const variedReplies = [
+                    "Yaar main Mazhar hi hoon, real chat hai. Engineering focus hai bas. 🚀",
+                    "Fake scene koi nahi hai bro, main Mazhar hi baat kar raha hoon.",
+                    "Real chat hai bhai, koi bot waghaira nahi hai yahan. Mazhar.DevX is here! 🔥"
+                ];
+                cleanReply = variedReplies[Math.floor(Math.random() * variedReplies.length)];
             }
         }
         cleanReply = cleanReply.replace(/Mazhar here/gi, "").replace(/Thinking\.\.\./gi, "").replace(/As an AI model/gi, "Yaar").trim();
@@ -464,7 +593,6 @@ async function handleMessage(sock, msg) {
             const match = cleanReply.match(/\[DEEP_RESEARCH:\s*(.*?)\]/i);
             if (match) {
                 const query = match[1].trim();
-                const { performResearch } = require("../services/search");
                 console.log(`📡 [RESEARCH] ${query}`);
 
                 const researchResult = await performResearch(query);
@@ -616,6 +744,18 @@ async function handleMessage(sock, msg) {
             }
         }
 
+        // Handle Relationship Update Trigger
+        if (cleanReply.includes("[SET_RELATIONSHIP:")) {
+            const relMatch = cleanReply.match(/\[SET_RELATIONSHIP:\s*(.*?)\]/i);
+            if (relMatch) {
+                const newRel = relMatch[1].trim();
+                profile.relationship = newRel;
+                await saveProfile(sender, profile);
+                console.log(`👤 [PROFILE] Updated relationship for ${sender} to: ${newRel}`);
+                cleanReply = cleanReply.replace(/\[SET_RELATIONSHIP:.*?\]/i, "").trim();
+            }
+        }
+
         // Handle Lead Trigger
         if (cleanReply.includes("[NEW_LEAD:")) {
             const leadMatch = cleanReply.match(/\[NEW_LEAD:\s*(.*?),\s*(.*?)\]/i);
@@ -697,7 +837,8 @@ async function handleMessage(sock, msg) {
                     cleanReply += `\n\n🎵 _Sent audio for: ${query}_`;
                 } catch (err) {
                     console.error("❌ [AI DJ Error]:", err.message);
-                    cleanReply += `\n\n_(System Note: Sorry yaar, the audio download for "${query}" failed right now.)_`;
+                    const apology = await mazharAiReply(`[DOWNLOAD_FAIL]: Audio download for "${query}" failed. Give a deep, polite apology and promise to fix it soon as Mazhar. Match user language.`, sender, pushName);
+                    await safeSendMessage(sock, sender, { text: apology }, { quoted: msg });
                 }
             }
         }
@@ -712,7 +853,7 @@ async function handleMessage(sock, msg) {
                 try {
                     const { searchVideo } = require("../services/search");
                     const buffer = await searchVideo(query);
-                    console.log(`📥 [AI CINEMA] Sent MP4 for: ${query}`);
+                    console.log(`📥 [AI THEATER] Sent MP4 for: ${query}`);
 
                     await safeSendMessage(sock, sender, {
                         video: buffer,
@@ -720,8 +861,64 @@ async function handleMessage(sock, msg) {
                     }, { quoted: msg });
                     cleanReply += `\n\n🎬 _Sent video for: ${query}_`;
                 } catch (err) {
-                    console.error("❌ [AI CINEMA Error]:", err.message);
-                    cleanReply += `\n\n_(System Note: Sorry yaar, the video download for "${query}" failed right now.)_`;
+                    console.error("❌ [AI THEATER Error]:", err.message);
+                    const apology = await mazharAiReply(`[DOWNLOAD_FAIL]: Video download for "${query}" failed. Give a deep, polite apology and promise to fix it soon as Mazhar. Match user language.`, sender, pushName);
+                    await safeSendMessage(sock, sender, { text: apology }, { quoted: msg });
+                }
+            }
+        }
+
+        // 8. PROFILE PIC TRIGGER
+        if (cleanReply.includes("[SEND_USER_PROFILE_PIC]")) {
+            cleanReply = cleanReply.replace(/\[SEND_USER_PROFILE_PIC\]/g, "").trim();
+            if (profile.profilePicUrl) {
+                try {
+                    const res = await fetch(profile.profilePicUrl);
+                    if (res.ok) {
+                        const buffer = Buffer.from(await res.arrayBuffer());
+                        await safeSendMessage(sock, sender, {
+                            image: buffer,
+                            caption: `📸 *Your Profile Picture*\n\nYaar, yeh rahi aapki DP. Zabardast lag rahi hai! 🔥`
+                        }, { quoted: msg });
+                    }
+                } catch (err) {
+                    console.warn("⚠️ [INTEL] Failed to fetch saved DP URL:", err.message);
+                }
+            } else {
+                await safeSendMessage(sock, sender, { text: "Yaar, mujhe aapki profile picture nahi mil saki. Private account hai kya? 😂" }, { quoted: msg });
+            }
+        }
+
+        // 9. MEME SEARCH TRIGGER
+        if (cleanReply.includes("[MEME_SEARCH:")) {
+            const match = cleanReply.match(/\[MEME_SEARCH:\s*(.*?)\]/i);
+            if (match) {
+                const query = match[1].trim();
+                cleanReply = cleanReply.replace(/\[MEME_SEARCH:.*?\]/i, "").trim();
+
+                try {
+                    const { searchWebImages } = require("../services/search");
+                    // Fetch more for backup
+                    const results = await searchWebImages(`${query} high-quality funny meme`, 5);
+                    if (results && results.length > 0) {
+                        for (const url of results) {
+                            try {
+                                const res = await fetch(url, { timeout: 5000 });
+                                if (res.ok) {
+                                    const buffer = Buffer.from(await res.arrayBuffer());
+                                    await safeSendMessage(sock, sender, {
+                                        image: buffer,
+                                        caption: `🤣 *Ultra Savage Meme: ${query}*`
+                                    }, { quoted: msg });
+                                    break; // SUCCESS
+                                }
+                            } catch (e) {
+                                console.warn(`⚠️ [MEME] Skip broken: ${url}`);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("❌ [MEME ENGINE Error]:", err.message);
                 }
             }
         }

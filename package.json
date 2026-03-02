@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "nuke": "taskkill /F /IM node.exe || echo No_ghosts_found && npm run dev"
+    "nuke": "taskkill /F /IM node.exe || echo No_node_processes_found"
   },
   "keywords": [],
   "author": "",

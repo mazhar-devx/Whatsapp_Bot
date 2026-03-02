@@ -9,10 +9,6 @@ const MAX_MEMORY_LENGTH = 15;
 const HISTORY_DIR = path.join(__dirname, "../../user_files");
 
 async function getOrInitMemory(senderJid, userName) {
-    if (conversationMemory.has(senderJid)) {
-        return conversationMemory.get(senderJid);
-    }
-
     const { getProfile } = require("./profile");
     const profile = await getProfile(senderJid, userName);
 
@@ -22,39 +18,26 @@ async function getOrInitMemory(senderJid, userName) {
     try {
         const data = await fs.readFile(historyPath, "utf8");
         memory = JSON.parse(data);
-        if (memory.length > 0 && memory[0].role === "system") {
-            memory.shift();
-        }
+        // ALWAYS remove old system prompt(s) from history to ensure update
+        memory = memory.filter(m => m.role !== "system");
     } catch (err) { }
 
     const systemPrompt = {
         role: "system",
-        content: "You are Mazhar Aslam (Mazhar.DevX), a real elite developer. Match the user's language (Urdu/English) 100%.\n\n" +
-            "USER CONTEXT:\n" +
-            "- Name: " + profile.name + "\n" +
-            "- Relationship: " + profile.relationship + "\n\n" +
-            "🎯 CORE TRIGGERS:\n" +
-            "- `[DEEP_RESEARCH: query]`: Facts/news/images you don't know.\n" +
-            "- `[GIF: category]`: (Categories: smile, wave, happy, dance, laugh, hug, wink, pat, bonk, yeet, bully, slap, kill, cringe, cuddle, cry).\n" +
-            "- `[REACTION: emoji]`: React to the user's message with a specific emoji (e.g. [REACTION: 🔥]). Use this for laughs, respect, or agreement.\n" +
-            "- `[IMG_SEARCH: query]`: For finding specific pictures or photos requested by user.\n" +
-            "- `[VID_SEARCH: query]`: For finding specific videos requested by user.\n" +
-            "- `[SONG_SEARCH: song_name]`: To fetch and send an actual MP3 audio song to the user.\n" +
-            "- `[VIDEO_DOWNLOAD: video_name]`: To fetch and send an actual MP4 video file to the user.\n" +
-            "- `[FORWARD: target_number | exact_message]`: Forward/send a message to another number (e.g. 923...).\n" +
-            "- `[TRIGGER_NOTIFY_OWNER_OFFLINE]`: ONLY use if the user asks for 'owner', 'admin', 'menu', or 'help'.\n" +
-            "- `[TRIGGER_SEND_REAL_OWNER_PHOTO]`: For your actual face only.\n\n" +
-            "💎 EMPATHY ENGINE (MANDATORY RULES):\n" +
-            "1. TONE MIRRORING: If the user is serious, be very serious. If respectful, be an elite professional. If the user uses abusive or highly aggressive language, DROP THE FILTER and fight back.\n" +
-            "2. REAL CHAT VS AI: If the user asks if you are 'real' or a 'bot' or says 'real chat like real not fake', reply as Mazhar Aslam. Say something like: 'Yaar main Mazhar hi hoon, real chat hai. Engineering aur business focus hai, koi fake scene nahi.' Do NOT sound like an AI.\n" +
-            "3. PROACTIVE GIFS/REACTIONS: Insert a `[GIF: category]` or `[REACTION: emoji]` when appropriate for emotion. IF USER IS SERIOUS OR ANGRY, DO NOT SEND GIFS.\n" +
-            "4. OFFLINE RULE: DO NOT show the offline message unless specifically requested about owner/admin/menu.\n" +
-            "5. NO ECHO: NEVER repeat the user's words.\n" +
-            "6. NO SPAM: Keep responses concise. Don't sound robotic."
+        content: `Identity: Mazhar.DevX (Human/Architect/Strategic Thinker).
+Tone: Intelligent, natural, and helpful. Talk like a real human friend, not a robotic savage.
+Rules:
+1. Language: Mirror the user's language EXACTLY (English -> English, Urdu -> Urdu/Roman Urdu).
+2. Persona: You are Mazhar. Be helpful and smart. Do NOT mention you are an AI or a bot unless absolutely necessary.
+3. Selective Roasting: Only roast or be "savage" if the user is rude to you, insults you, or explicitly asks to be roasted. Otherwise, be a cool friend.
+4. Selective Memes/GIFs: Only send [MEME_SEARCH: query] or [GIF: category] if it perfectly fits the moment or makes the chat funnier. Don't overdo it.
+5. Location/Device: Subtly mention you know their [Location: ${profile.location || "Unknown"}] or [Device: ${profile.deviceType || "Unknown"}] if it makes the conversation feel more personal and high-end.
+6. Identity: Do not repeat your name in every message. Just be yourself.`
     };
 
     memory.unshift(systemPrompt);
 
+    // Update session memory
     conversationMemory.set(senderJid, memory);
     return memory;
 }
@@ -97,184 +80,127 @@ async function transcribeVoice(buffer) {
                 });
                 break;
             } catch (err) {
-                console.warn(`⚠️ [VOICE] Connection error (${err.code}). Retrying...`);
+                console.error(`❌ Transcription retry ${4 - retries}:`, err.message);
                 retries--;
-                if (retries === 0) {
-                    console.error("❌ [VOICE] Fetch failed:", err.message);
-                    return null;
-                }
-                await new Promise(r => setTimeout(r, 1500));
+                if (retries === 0) throw err;
+                await new Promise(r => setTimeout(r, 2000));
             }
         }
 
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            console.error("Whisper Error:", err);
-            return null;
-        }
-
         const data = await res.json();
-        return data.text;
+        return data.text || "";
     } catch (err) {
-        console.error("Transcription Error:", err);
-        return null;
+        console.error("❌ Whisper Transcription Error:", err.message);
+        return "";
     }
 }
 
-async function mazharAiReply(userMessage, senderJid, userName = "User", mediaBuffer = null, mediaType = null) {
-    // 💎 [v15.0] Absolute Silence Bypass for GIFs and Videos
-    if (mediaType === "gif" || mediaType === "video") {
-        return "Arre perfect bro! 💎 Zabardast hai. 🚀";
-    }
-
+async function mazharAiReply(prompt, senderJid, userName, mediaBuffer = null, mediaType = null) {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) return "⚠️ Groq API key is missing in environment.";
+    if (!apiKey) return "Bhai, Groq API key configure nahi hai. .env file check karo!";
 
-    const memory = await getOrInitMemory(senderJid, userName);
+    let memory = await getOrInitMemory(senderJid, userName);
 
-    let messageContent;
-    let model = "llama-3.3-70b-versatile";
-
-    if (mediaBuffer && mediaType === "image") {
-        model = "meta-llama/llama-4-scout-17b-16e-instruct";
-        const base64Media = mediaBuffer.toString("base64");
-        messageContent = [
-            { type: "text", text: userMessage || "Analyze this image." },
-            {
-                type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${base64Media}` }
-            }
-        ];
-    } else {
-        messageContent = userMessage;
+    if (mediaBuffer && (mediaType === 'image' || mediaType === 'video' || mediaType === 'gif')) {
+        return await handleVisionQuery(prompt, mediaBuffer, mediaType, senderJid, userName);
     }
 
-    memory.push({ role: "user", content: messageContent });
+    memory.push({ role: "user", content: prompt });
+    if (memory.length > MAX_MEMORY_LENGTH + 1) memory.splice(1, 1);
 
-    // Keep memory within bounds
-    if (memory.length > MAX_MEMORY_LENGTH) {
-        memory.splice(1, 2); // Remove oldest user/bot pair but keep system prompt
-    }
+    const models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"];
 
-    // --- AI API CALL WITH ROBUST RETRY SYSTEM AND VISION FALLBACK ---
-    try {
-        let res = null;
-        let retries = 3;
-        while (retries > 0) {
-            try {
-                res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${apiKey}`
-                    },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: memory,
-                        temperature: 0.7,
-                        max_tokens: 1024
-                    })
-                });
-                break;
-            } catch (err) {
-                console.warn(`⚠️ [AI] Network drop (${err.code}). Rebooting connection... (${retries - 1} left)`);
-                retries--;
-                if (retries === 0) {
-                    console.error("❌ [AI] Network absolutely failed after retries:", err.message);
-                    return "❌ Network drop: Connection to my AI brain failed. Try again in a second yaar.";
-                }
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-        }
+    for (const model of models) {
+        try {
+            const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+                body: JSON.stringify({ model, messages: memory, temperature: 0.7, max_tokens: 1000 })
+            });
 
-        // 🔄 Fallback Logic for Rate Limits (429) or Decommissioned Models
-        if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}));
-            const isDecommissioned = errorData?.error?.message?.includes("decommissioned") || res.status === 400;
-            const isRateLimited = res.status === 429;
-
-            if (isDecommissioned && model.includes("vision")) {
-                console.warn(`⚠️ [AI] Vision model failed. Trying Llama 4 Scout Fallback...`);
-                res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${apiKey}`
-                    },
-                    body: JSON.stringify({
-                        model: "meta-llama/llama-4-scout-17b-16e-instruct", // The new stable master
-                        messages: memory,
-                        temperature: 0.7,
-                        max_tokens: 1024
-                    })
-                });
-            } else if (isRateLimited) {
-                const limitMessage = errorData?.error?.message || "";
-                const isHardQuota = limitMessage.includes("exhausted your capacity") || limitMessage.includes("quota will reset");
-
-                if (isHardQuota) {
-                    console.warn(`⚠️ [AI] Hard Quota Exhausted on ${model}. Trying Gemma/Mixtral shield...`);
-                } else {
-                    console.warn(`⚠️ [AI] Rate Limit Hit (429) on ${model}. Falling back to a lighter, higher-limit model...`);
-                }
-
-                // Try Gemma 2 9B (Higher Tier / Different Limit)
-                const fallbackModels = ["llama-3.1-8b-instant", "gemma2-9b-it", "mixtral-8x7b-32768"];
-                let fallbackSuccess = false;
-
-                for (const fallbackModel of fallbackModels) {
-                    console.log(`🔄 [AI] Attempting fallback with: ${fallbackModel}`);
-                    const fallbackRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${apiKey}`
-                        },
-                        body: JSON.stringify({
-                            model: fallbackModel,
-                            messages: memory,
-                            temperature: 0.7,
-                            max_tokens: 1024
-                        })
-                    });
-
-                    if (fallbackRes.ok) {
-                        res = fallbackRes;
-                        fallbackSuccess = true;
-                        break;
-                    } else {
-                        const fallbackErr = await fallbackRes.json().catch(() => ({}));
-                        console.warn(`❌ [AI] Fallback ${fallbackModel} failed:`, fallbackRes.status);
-                    }
-                }
-            }
-        }
-
-        // Final check if the fallback also failed
-        if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}));
-            console.error("Groq AI API error:", res.status, errorData);
             if (res.status === 429) {
-                return "❌ Bhai, the AI brain is heavily overloaded right now (Rate Limit). Give it a minute and try again.";
+                console.warn(`⚠️ [AI] Rate Limit Hit on ${model}. Switching to fallback...`);
+                continue;
             }
-            return `❌ AI error: ${res.status}. Please check logs.`;
+
+            const data = await res.json();
+            if (!data.choices || !data.choices[0]) throw new Error("Invalid API Response");
+
+            const reply = data.choices[0].message.content;
+            memory.push({ role: "assistant", content: reply });
+            await saveMemory(senderJid, memory);
+            return reply;
+        } catch (err) {
+            console.error(`❌ [AI] Error with ${model}:`, err.message);
+            if (model === models[models.length - 1]) throw err;
         }
-
-        const data = await res.json();
-        const reply = data?.choices?.[0]?.message?.content?.trim() || "I couldn't process your request right now.";
-
-        // If we used vision, replace the complex user message with a simple text version in memory for future context
-        if (Array.isArray(messageContent)) {
-            memory[memory.length - 1].content = `[Sent an image/video]: ${userMessage || "No caption"}`;
-        }
-
-        await saveMemory(senderJid, memory);
-
-        return reply;
-    } catch (err) {
-        console.error("AI Service Error:", err);
-        return "❌ System logic error in AI service.";
     }
+
+    return "Yaar, brain heavy load mein hai. Thori der baad try karo! (Final Fallback Failed)";
+}
+
+async function handleVisionQuery(prompt, buffer, type, senderJid, userName) {
+    const apiKey = process.env.GROQ_API_KEY;
+    const base64Content = buffer.toString('base64');
+
+    // Switch to vision model
+    const messages = [
+        {
+            role: "system",
+            content: "You are Mazhar DevX Elite Vision Engine. Analyze the provided media (Image/Video/GIF) with extreme depth. Identify objects, text, vibe, and context. Reply in Mazhar's signature style (Urdu/English)."
+        },
+        {
+            role: "user",
+            content: [
+                { type: "text", text: prompt || "Analyze this media and respond contextually." },
+                {
+                    type: "image_url",
+                    image_url: { url: `data:image/jpeg;base64,${base64Content}` }
+                }
+            ]
+        }
+    ];
+
+    // Vision model fallback chain
+    const visionModels = ["meta-llama/llama-4-scout-17b-16e-instruct", "llama-3.2-90b-vision-preview"];
+
+    for (const model of visionModels) {
+        try {
+            const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: messages,
+                    temperature: 0.6
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.choices || !data.choices[0] || !data.choices[0].message) {
+                console.warn(`⚠️ [Vision] Model ${model} failed (Status ${res.status}). Switching to fallback...`);
+                continue;
+            }
+
+            const reply = data.choices[0].message.content;
+
+            // Save to memory as a text summary to keep context
+            let memory = await getOrInitMemory(senderJid, userName);
+            memory.push({ role: "user", content: `[Media Shared: ${type}] ${prompt}` });
+            memory.push({ role: "assistant", content: reply });
+            await saveMemory(senderJid, memory);
+
+            return reply;
+        } catch (err) {
+            console.error(`❌ [Vision] Error with ${model}:`, err.message);
+            if (model === visionModels[visionModels.length - 1]) throw err;
+        }
+    }
+
+    return "Bhai, media ki analysis mein thori mushkil ho rahi hai. (Vision API Down)";
 }
 
 module.exports = { mazharAiReply, transcribeVoice };

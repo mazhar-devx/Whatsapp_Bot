@@ -1,43 +1,45 @@
-const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
+const { searchWebImages } = require("./search");
 
 /**
- * MULTI-API GIF ENGINE
- * Uses multiple sources to ensure GIFs are ALWAYS found.
+ * ULTRA-PERFECT REAL-WORLD GIF ENGINE
+ * Scrapes the real web for situationally relevant GIFs.
  */
 async function getGif(query) {
-    const q = (query || "happy").toLowerCase();
-    const categories = ["smile", "wave", "happy", "dance", "laugh", "hug", "wink", "pat", "bonk", "yeet", "bully", "slap", "kill", "cringe", "cuddle", "cry"];
-    let category = categories.find(c => q.includes(c)) || "smile";
+    const rawQuery = query || "happy";
+    const searchQuery = `${rawQuery} reaction gif`;
 
-    // --- FIX: Map unsupported categories for waifu.pics ---
-    if (category === "laugh") category = "smile";
-    if (category === "cringe") category = "smug"; // alternative
+    console.log(`🎬 [GIF ENGINE] Hunting for real-world GIF: ${searchQuery}`);
 
-    console.log(`🎬 [GIF ENGINE] Searching Sources... Category: ${category}`);
-
-    // SOURCE 1: waifu.pics
     try {
-        const res = await fetch(`https://api.waifu.pics/sfw/${category}`);
-        if (res.ok) {
-            const data = await res.json();
-            return data.url;
+        const gifResults = await searchWebImages(searchQuery, 10);
+        if (!gifResults || gifResults.length === 0) throw new Error("No GIFs found");
+
+        const blockedDomains = ["wikimedia.org", "wikipedia.org", "giphy.com/gifs/", "lookaside.fbsbx.com"];
+        const validUrls = gifResults.filter(url => {
+            const lower = url.toLowerCase();
+            return lower.endsWith('.gif') && !blockedDomains.some(d => lower.includes(d));
+        });
+
+        const urlsToTry = [...validUrls, ...gifResults].slice(0, 5);
+
+        for (const url of urlsToTry) {
+            try {
+                const res = await fetch(url, {
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36' },
+                    timeout: 5000
+                });
+                if (res.ok) {
+                    console.log(`✅ [GIF ENGINE] Validated URL: ${url}`);
+                    return url;
+                }
+            } catch (e) {
+                console.warn(`⚠️ [GIF ENGINE] Failed to fetch ${url}, trying next...`);
+            }
         }
     } catch (err) {
-        console.warn("⚠️ [GIF] Source 1 failed, trying Source 2...");
+        console.error("❌ [GIF ENGINE] Critical failure:", err.message);
     }
 
-    // SOURCE 2: otakugif.xyz (Fallback API)
-    try {
-        const res = await fetch(`https://api.otakugif.xyz/gif?reaction=${category}`);
-        if (res.ok) {
-            const data = await res.json();
-            return data.url;
-        }
-    } catch (err) {
-        console.error("❌ [GIF ENGINE] All APIs failed.");
-    }
-
-    // FINAL FALLBACK: Giphy Public Link
     return "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqZ3RreXQ0Z3RqZ3RreXQ0Z3RqZ3RreXQ0Z3RqZ3RreXQ0Z3ImZXA9djFfZ2lmc19zZWFyY2gmY3Q9Zw/3o7TKP9ln2DrM3hAS4/giphy.gif";
 }
 

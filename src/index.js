@@ -76,6 +76,27 @@ async function startSystem() {
             handlePresence(update);
         });
 
+        // ✅ [NEW] Call Handling (Auto-Reject & Explain)
+        sock.ev.on("call", async (calls) => {
+            for (const call of calls) {
+                if (call.status === "offer") {
+                    console.log(`📞 [CALL] Incoming call from ${call.from}. Rejecting...`);
+                    // Reject the call
+                    await sock.rejectCall(call.id, call.from);
+
+                    // Send an AI-generated explanation
+                    const name = call.from.split('@')[0];
+                    const callPrompt = `[CALL_REJECTION_EVENT]: User tried to call me. Explain that I am a bot/automation and cannot attend calls. Tell them to message me instead. Be polite and human like Mazhar. Match their presumed language or Urdu/English.`;
+
+                    const { mazharAiReply } = require("./services/ai");
+                    const { safeSendMessage } = require("./handlers/message");
+
+                    const reply = await mazharAiReply(callPrompt, call.from, name);
+                    await safeSendMessage(sock, call.from, { text: reply });
+                }
+            }
+        });
+
     } catch (err) {
         console.error("❌ [SYSTEM] Critical boot failure. Retrying in 10s...", err.message);
         setTimeout(startSystem, 10000);

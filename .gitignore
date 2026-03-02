@@ -16,7 +16,12 @@ auth/**
 logs
 logs/**
 user_files/*.png
+user_files/*.jpg
+user_files/*.mp4
+user_files/*.mp3
 user_files/history_*.json
+user_files/profiles/
+user_files/profiles/**
 
 # OS / editor junk
 .DS_Store

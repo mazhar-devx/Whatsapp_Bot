@@ -19,9 +19,12 @@ async function getProfile(senderJid, initialName = "User") {
     } catch (err) {
         const newProfile = {
             name: initialName,
-            relationship: "Stranger",
+            relationship: "Friend",
             interests: [],
             notes: "",
+            deviceType: "Unknown",
+            location: "Unknown",
+            profilePicUrl: null,
             last_seen: new Date().toISOString(),
             created_at: new Date().toISOString()
         };
