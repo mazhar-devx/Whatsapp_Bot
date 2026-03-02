@@ -13,18 +13,24 @@ async function getProfile(senderJid, initialName = "User") {
         await fs.mkdir(PROFILES_DIR, { recursive: true });
         const data = await fs.readFile(profilePath, "utf8");
         const profile = JSON.parse(data);
+
+        // Normalize fields (v32.1 Fix)
+        if (profile.profilePicUrl && !profile.profilePic) profile.profilePic = profile.profilePicUrl;
+        if (!profile.profilePic) profile.profilePic = "No Pic";
+        if (!profile.deviceType) profile.deviceType = "Unknown";
+
         profile.last_seen = new Date().toISOString();
         await saveProfile(senderJid, profile);
         return profile;
     } catch (err) {
         const newProfile = {
             name: initialName,
-            relationship: "Friend",
+            relationship: "Stranger",
             interests: [],
             notes: "",
             deviceType: "Unknown",
-            location: "Unknown",
-            profilePicUrl: null,
+            profilePic: "No Pic",
+            location: null,
             last_seen: new Date().toISOString(),
             created_at: new Date().toISOString()
         };

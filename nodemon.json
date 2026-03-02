@@ -1,5 +1,8 @@
 {
-  "watch": ["index.js"],
+  "watch": [
+    "index.js",
+    "src/"
+  ],
   "ignore": [
     "auth/**",
     "logs/**",
@@ -8,4 +11,3 @@
   "ext": "js,json",
   "delay": "500"
 }
-

@@ -1,4 +1,4 @@
-const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
+// Native fetch used (Node 22+)
 
 /**
  * Performs a deep search for web links or videos.
@@ -10,13 +10,18 @@ async function deepSearch(query, type = "web") {
 
     console.log(`🔍 [SEARCH] Deep searching (${type}): ${query}`);
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     try {
         const response = await fetch(searchUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
+            },
+            signal: controller.signal
         });
 
+        clearTimeout(timeout);
         if (!response.ok) throw new Error(`Search failed: ${response.status}`);
 
         const html = await response.text();
@@ -58,10 +63,14 @@ async function searchWebImages(query, count = 1) {
 
     console.log(`🔍 [GOOGLE HUNTER v14.1-SHIELD] Hunting real web for: ${query}`);
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     try {
         // STRATEGY A: Google Images Scrape
         const res = await fetch(`https://www.google.com/search?q=${safeQuery}&tbm=isch&sclient=img`, {
-            headers: { 'User-Agent': ua, 'Referer': 'https://www.google.com/' }
+            headers: { 'User-Agent': ua, 'Referer': 'https://www.google.com/' },
+            signal: controller.signal
         });
         const html = await res.text();
 
@@ -77,7 +86,11 @@ async function searchWebImages(query, count = 1) {
             results.push(url);
         }
 
-        if (results.length > 0) return results.slice(0, count);
+        if (results.length > 0) {
+            // v50.0: Randomize selection to prevent repetition
+            results.sort(() => 0.5 - Math.random());
+            return results.slice(0, count);
+        }
 
         // STRATEGY B: DuckDuckGo Fallback (Original Hunter Logic)
         console.warn("⚠️ [HUNTER] Google result empty, trying DDG...");
@@ -94,7 +107,10 @@ async function searchWebImages(query, count = 1) {
             if (apiRes.ok) {
                 const data = await apiRes.json();
                 if (data.results && data.results.length > 0) {
-                    return data.results.slice(0, count).map(r => r.image);
+                    // v50.0: Randomize selection to prevent repetition
+                    const ddgResults = data.results.map(r => r.image);
+                    ddgResults.sort(() => 0.5 - Math.random());
+                    return ddgResults.slice(0, count);
                 }
             }
         }
@@ -133,7 +149,7 @@ const play = require("play-dl");
  * Uses a massive chain of API scrapers to bypass YouTube 403s.
  */
 async function searchAudio(query) {
-    console.log(`🎵 [AUDIO ENGINE v22] Deep Search: ${query}`);
+    console.log(`🎵 [AUDIO ENGINE v21] Deep Search: ${query}`);
     try {
         const search = await yts(query);
         const video = search.videos[0];
@@ -142,47 +158,70 @@ async function searchAudio(query) {
         const vidUrl = video.url;
         console.log(`🎵 [AUDIO] Found target: ${video.title}. Hunting download link...`);
 
-        const providers = [
-            {
-                name: "Vreden (Premium)",
-                url: `https://api.vreden.my.id/api/ytmp3?url=${vidUrl}`,
-                extract: (data) => data.result?.download?.url || data.url
-            },
-            {
-                name: "Botcahx (Stable)",
-                url: `https://api.botcahx.live/api/dowloader/ytmp3?url=${vidUrl}&apikey=btch-mazhar`,
-                extract: (data) => data.result?.url
-            },
-            {
-                name: "Maher-Zubair (Classic)",
-                url: `https://api.maher-zubair.tech/download/ytmp3?url=${vidUrl}`,
-                extract: (data) => data.result?.link
-            },
-            {
-                name: "BK9",
-                url: `https://bk9.fun/download/youtube?url=${vidUrl}`,
-                extract: (data) => data.BK9?.download?.url
-            }
-        ];
-
-        for (const provider of providers) {
-            try {
-                console.log(`➡️ [AUDIO] Trying ${provider.name}...`);
-                const res = await fetch(provider.url);
-                if (!res.ok) continue;
-
+        // API 0: Maher-Zubair (High Stability)
+        try {
+            console.log("➡️ Trying API 0: Maher-Zubair...");
+            const res = await fetch(`https://api.maher-zubair.tech/download/ytmp3?url=${vidUrl}`);
+            if (res.ok) {
                 const data = await res.json();
-                const link = provider.extract(data);
-
-                if (link) {
-                    console.log(`✅ [AUDIO] ${provider.name} success: ${link}`);
-                    const bufRes = await fetch(link);
+                if (data.status === 200 && data.result?.link) {
+                    const bufRes = await fetch(data.result.link);
                     if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
                 }
-            } catch (e) {
-                console.warn(`⚠️ [AUDIO] ${provider.name} fail: ${e.message}`);
             }
-        }
+        } catch (e) { }
+
+        // API 1: BK9
+        try {
+            console.log("➡️ Trying API 1: BK9...");
+            const res = await fetch(`https://bk9.fun/download/youtube?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status && data.BK9?.download?.url) {
+                    const bufRes = await fetch(data.BK9.download.url);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
+
+        // API 1: Ryzendesu
+        try {
+            console.log("➡️ Trying API 1: Ryzendesu...");
+            const res = await fetch(`https://api.ryzendesu.vip/api/downloader/ytmp3?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.url) {
+                    const bufRes = await fetch(data.url);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
+
+        // API 2: Siputzx
+        try {
+            console.log("➡️ Trying API 2: Siputzx...");
+            const res = await fetch(`https://api.siputzx.my.id/api/d/ytmp3?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.data?.dl) {
+                    const bufRes = await fetch(data.data.dl);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
+
+        // API 3: Agatz
+        try {
+            console.log("➡️ Trying API 3: Agatz...");
+            const res = await fetch(`https://api.agatz.xyz/api/ytmp3?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.data?.dl) {
+                    const bufRes = await fetch(data.data.dl);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
 
         // LAST RESORT: Cobalt
         console.log("➡️ Trying LAST RESORT: Cobalt...");
@@ -213,7 +252,7 @@ async function searchAudio(query) {
  * Uses a massive chain of API scrapers to bypass YouTube 403s.
  */
 async function searchVideo(query) {
-    console.log(`🎬 [VIDEO ENGINE v22] Deep Search: ${query}`);
+    console.log(`🎬 [VIDEO ENGINE v21] Deep Search: ${query}`);
     try {
         const search = await yts(query);
         const video = search.videos[0];
@@ -222,47 +261,70 @@ async function searchVideo(query) {
         const vidUrl = video.url;
         console.log(`🎬 [VIDEO] Found target: ${video.title}. Hunting download link...`);
 
-        const providers = [
-            {
-                name: "Vreden (Premium)",
-                url: `https://api.vreden.my.id/api/ytmp4?url=${vidUrl}`,
-                extract: (data) => data.result?.download?.url || data.url
-            },
-            {
-                name: "Botcahx (Stable)",
-                url: `https://api.botcahx.live/api/dowloader/ytmp4?url=${vidUrl}&apikey=btch-mazhar`,
-                extract: (data) => data.result?.url
-            },
-            {
-                name: "Maher-Zubair (Classic)",
-                url: `https://api.maher-zubair.tech/download/ytmp4?url=${vidUrl}`,
-                extract: (data) => data.result?.link
-            },
-            {
-                name: "BK9",
-                url: `https://bk9.fun/download/youtube?url=${vidUrl}`,
-                extract: (data) => data.BK9?.download?.url
-            }
-        ];
-
-        for (const provider of providers) {
-            try {
-                console.log(`➡️ [VIDEO] Trying ${provider.name}...`);
-                const res = await fetch(provider.url);
-                if (!res.ok) continue;
-
+        // API 0: BK9 (High Reliability)
+        try {
+            console.log("➡️ Trying API 0: BK9...");
+            const res = await fetch(`https://bk9.fun/download/youtube?url=${vidUrl}`);
+            if (res.ok) {
                 const data = await res.json();
-                const link = provider.extract(data);
-
-                if (link) {
-                    console.log(`✅ [VIDEO] ${provider.name} success: ${link}`);
-                    const bufRes = await fetch(link);
+                if (data.status && data.BK9?.download?.url) {
+                    const bufRes = await fetch(data.BK9.download.url);
                     if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
                 }
-            } catch (e) {
-                console.warn(`⚠️ [VIDEO] ${provider.name} fail: ${e.message}`);
             }
-        }
+        } catch (e) { }
+
+        // API 0: Maher-Zubair (High Stability)
+        try {
+            console.log("➡️ Trying API 0: Maher-Zubair...");
+            const res = await fetch(`https://api.maher-zubair.tech/download/ytmp4?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 200 && data.result?.link) {
+                    const bufRes = await fetch(data.result.link);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
+
+        // API 1: BK9
+        try {
+            console.log("➡️ Trying API 1: BK9...");
+            const res = await fetch(`https://bk9.fun/download/youtube?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status && data.BK9?.download?.url) {
+                    const bufRes = await fetch(data.BK9.download.url);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
+
+        // API 2: Siputzx
+        try {
+            console.log("➡️ Trying API 2: Siputzx...");
+            const res = await fetch(`https://api.siputzx.my.id/api/d/ytmp4?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.data?.dl) {
+                    const bufRes = await fetch(data.data.dl);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
+
+        // API 3: Agatz
+        try {
+            console.log("➡️ Trying API 3: Agatz...");
+            const res = await fetch(`https://api.agatz.xyz/api/ytmp4?url=${vidUrl}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.data?.dl) {
+                    const bufRes = await fetch(data.data.dl);
+                    if (bufRes.ok) return Buffer.from(await bufRes.arrayBuffer());
+                }
+            }
+        } catch (e) { }
 
         // LAST RESORT: Cobalt
         console.log("➡️ Trying LAST RESORT: Cobalt...");

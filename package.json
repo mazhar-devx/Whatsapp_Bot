@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "nuke": "taskkill /F /IM node.exe || echo No_node_processes_found"
+    "nuke": "taskkill /F /IM node.exe || echo No_ghosts_found && npm run dev"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +19,7 @@
     "dotenv": "^17.3.1",
     "formdata-node": "^6.0.3",
     "node-fetch": "^3.3.2",
+    "pdf-parse": "^2.4.5",
     "play-dl": "^1.9.7",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
