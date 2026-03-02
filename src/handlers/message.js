@@ -238,17 +238,21 @@ async function handleMessage(sock, msg) {
             return;
         }
 
-        if (lower.match(/^(\d+)\s*(min|minute|minutes)$/) || ["1", "2", "3", "4"].includes(lower)) {
+        // v55.0: Enhanced Regex to accept raw numbers like "30" or "45" directly
+        if (lower.match(/^(\d+)\s*(min|minute|minutes)?$/) || ["1", "2", "3", "4"].includes(lower)) {
             let mins = 0;
+            // Handle specific menu shortcuts (1=1m, 2=5m, 3=10m, 4=30m) First
             if (lower === "1") mins = 1;
             else if (lower === "2") mins = 5;
             else if (lower === "3") mins = 10;
             else if (lower === "4") mins = 30;
             else {
+                // Handle raw numbers (e.g. "15", "30", "45") or "15 min"
                 const match = lower.match(/^(\d+)/);
-                mins = parseInt(match[1]);
+                mins = parseInt(match[1], 10);
             }
 
+            // Cap the maximum break time to 60 minutes for safety
             if (mins > 0 && mins <= 60) {
                 stopAiStatus.set(sender, Date.now() + (mins * 60 * 1000));
                 await safeSendMessage(sock, sender, { text: `✅ [STOP] Theek hai yaar, main ${mins} minute ke liye break pe hoon. *'resume'* likhoge toh wapis aa jaunga. 👋` }, { quoted: msg });
