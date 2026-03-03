@@ -292,7 +292,12 @@ async function mazharAiReply(userMessage, senderJid, userName = "User", mediaBuf
 
         // 🔄 Fallback Logic for Rate Limits (429) or Decommissioned Models
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}));
+            let errorData = {};
+            try {
+                // Safely attempt to parse error data if not consumed
+                errorData = await res.json().catch(() => ({}));
+            } catch (e) { }
+
             const isDecommissioned = errorData?.error?.message?.includes("decommissioned") || res.status === 400;
             const isRateLimited = res.status === 429;
 
@@ -316,13 +321,23 @@ async function mazharAiReply(userMessage, senderJid, userName = "User", mediaBuf
                 const isHardQuota = limitMessage.includes("exhausted your capacity") || limitMessage.includes("quota will reset");
 
                 if (isHardQuota) {
-                    console.warn(`⚠️ [AI] Hard Quota Exhausted on ${model}. Trying Gemma/Mixtral shield...`);
+                    console.warn(`⚠️ [AI] Hard Quota Exhausted on ${model}. Trying Vision Fallbacks or Text shield...`);
                 } else {
-                    console.warn(`⚠️ [AI] Rate Limit Hit (429) on ${model}. Falling back to a lighter, higher-limit model...`);
+                    console.warn(`⚠️ [AI] Rate Limit Hit (429) on ${model}. Falling back to other models...`);
                 }
 
-                // Try Gemma 2 9B (Higher Tier / Different Limit)
-                const fallbackModels = ["llama-3.1-8b-instant", "gemma2-9b-it", "mixtral-8x7b-32768"];
+                // If memory contains images, we MUST strip them before calling text models (or use another vision model)
+                const hasImage = memory.some(m => Array.isArray(m.content) && m.content.some(c => c.type === "image_url"));
+
+                let fallbackModels = [];
+                if (hasImage) {
+                    // Vision model fallbacks
+                    fallbackModels = ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"];
+                } else {
+                    // Text model fallbacks
+                    fallbackModels = ["meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b", "llama-3.1-8b-instant"];
+                }
+
                 let fallbackSuccess = false;
 
                 for (const fallbackModel of fallbackModels) {
@@ -346,8 +361,47 @@ async function mazharAiReply(userMessage, senderJid, userName = "User", mediaBuf
                         fallbackSuccess = true;
                         break;
                     } else {
-                        const fallbackErr = await fallbackRes.json().catch(() => ({}));
-                        console.warn(`❌ [AI] Fallback ${fallbackModel} failed:`, fallbackRes.status);
+                        try {
+                            const fallbackErr = await fallbackRes.json().catch(() => ({}));
+                            console.warn(`❌ [AI] Fallback ${fallbackModel} failed:`, fallbackRes.status, fallbackErr?.error?.message);
+                        } catch (e) {
+                            console.warn(`❌ [AI] Fallback ${fallbackModel} failed:`, fallbackRes.status);
+                        }
+                    }
+                }
+
+                if (!fallbackSuccess && hasImage) {
+                    console.warn(`⚠️ [AI] Vision fallbacks failed. Stripping images and falling back to text models...`);
+                    // Create a sanitized memory without the actual image base64 objects, to prevent 400 Bad Request on text models
+                    const textOnlyMemory = memory.map(m => {
+                        if (Array.isArray(m.content)) {
+                            return { ...m, content: "(User sent an image but AI cannot see it right now due to limits. Ask user to describe it.)" + m.content.filter(c => c.type === "text").map(c => c.text).join(" ") };
+                        }
+                        return m;
+                    });
+
+                    const textFallbackModels = ["meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b", "llama-3.1-8b-instant"];
+                    for (const textModel of textFallbackModels) {
+                        console.log(`🔄 [AI] Attempting text-only fallback with: ${textModel}`);
+                        const textFallbackRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                Authorization: `Bearer ${apiKey}`
+                            },
+                            body: JSON.stringify({
+                                model: textModel,
+                                messages: textOnlyMemory,
+                                temperature: 0.7,
+                                max_tokens: 1024
+                            })
+                        });
+
+                        if (textFallbackRes.ok) {
+                            res = textFallbackRes;
+                            fallbackSuccess = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -355,7 +409,10 @@ async function mazharAiReply(userMessage, senderJid, userName = "User", mediaBuf
 
         // Final check if the fallback also failed
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}));
+            let errorData = {};
+            try {
+                errorData = await res.json().catch(() => ({}));
+            } catch (e) { }
             console.error("Groq AI API error:", res.status, errorData);
             if (res.status === 429) {
                 return "❌ Bhai, the AI brain is heavily overloaded right now (Rate Limit). Give it a minute and try again.";

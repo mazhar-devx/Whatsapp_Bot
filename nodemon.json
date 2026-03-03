@@ -6,7 +6,8 @@
   "ignore": [
     "auth/**",
     "logs/**",
-    "node_modules/**"
+    "node_modules/**",
+    "user_files/**"
   ],
   "ext": "js,json",
   "delay": "500"

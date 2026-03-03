@@ -13,10 +13,11 @@ auth
 auth/**
 
 # Logs and runtime data
-logs
-logs/**
-user_files/*.png
-user_files/history_*.json
+logs/
+user_files/
+models.json
+models.txt
+test_groq_models.js
 
 # OS / editor junk
 .DS_Store
