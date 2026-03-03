@@ -35,7 +35,11 @@ async function connectToWhatsApp(authPath = "auth") {
 
             // 2. Generate Image file for Browser
             try {
-                const qrPath = path.join(process.cwd(), "user_files", "login-qr.png");
+                const qrDir = path.join(process.cwd(), "user_files");
+                if (!fs.existsSync(qrDir)) {
+                    fs.mkdirSync(qrDir, { recursive: true });
+                }
+                const qrPath = path.join(qrDir, "login-qr.png");
                 await QRCode.toFile(qrPath, qr, {
                     color: {
                         dark: '#000000',
