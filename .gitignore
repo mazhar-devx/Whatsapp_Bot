@@ -15,9 +15,6 @@ auth/**
 # Logs and runtime data
 logs/
 user_files/
-models.json
-models.txt
-test_groq_models.js
 
 # OS / editor junk
 .DS_Store
